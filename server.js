@@ -5,10 +5,51 @@ const cheerio = require('cheerio');
 
 const app = express();
 const cache = {};
-const cacheDuration = 7*24*3600000; 
-const Port = process.env.PORT || 5000;
+const cacheDuration = 7 * 24 * 3600000; // 7 days in milliseconds
 app.use(cors());
 
+// Your CodeChef endpoint
+app.get('/codechef/:username', async (req, res) => {
+  const { username } = req.params;
+  const profileUrl = `https://www.codechef.com/users/${username}`;
+
+  if (cache[username] && (Date.now() - cache[username].timestamp) < cacheDuration) {
+    return res.json(cache[username].data);
+  }
+  
+  try {
+    const response = await fetch(profileUrl);
+    const html = await response.text();
+    const $ = cheerio.load(html);
+
+    const currentRating = $('.rating-number').first().text().trim();
+    const maxRating = $('.rating-header small').first().text().match(/\d+/)?.[0];
+
+    if (!currentRating) {
+      return res.status(404).json({ error: 'User not found or page layout changed' });
+    }
+
+    const userData = {
+      username,
+      rating: parseInt(currentRating),
+      maxRating: parseInt(maxRating),
+      profileUrl,
+    };
+
+    // Store in cache
+    cache[username] = {
+      data: userData,
+      timestamp: Date.now(),
+    };
+
+    res.json(userData);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch CodeChef data' });
+  }
+});
+
+// Your LeetCode endpoint
 app.get('/leetcode/:username', async(req, res) => {
   const { username } = req.params;
   const profileUrl = `https://leetcode.com/${username}`;
@@ -50,17 +91,16 @@ app.get('/leetcode/:username', async(req, res) => {
 
     const data = await response.json();
     
-  
-    
     if (!data.data) {
       return res.status(404).json({ error: 'User not found or API response format changed' });
     }
 
+    // Calculate total problems solved
     let totalSolved = 0;
     if (data.data.matchedUser && 
         data.data.matchedUser.submitStats && 
         data.data.matchedUser.submitStats.acSubmissionNum) {
-  
+      
       const allDifficulty = data.data.matchedUser.submitStats.acSubmissionNum.find(
         item => item.difficulty === "All"
       );
@@ -94,46 +134,17 @@ app.get('/leetcode/:username', async(req, res) => {
     res.status(500).json({ error: 'Failed to fetch LeetCode data: ' + err.message });
   }
 });
-app.get('/codechef/:username', async (req, res) => {
-  const { username } = req.params;
-  const profileUrl = `https://www.codechef.com/users/${username}`;
 
-  // Check cache
-  if (cache[username] && (Date.now() - cache[username].timestamp) < cacheDuration) {
-    return res.json(cache[username].data);
-  }
-  
-  try {
-    const response = await fetch(profileUrl);
-    const html = await response.text();
-    const $ = cheerio.load(html);
 
-    const currentRating = $('.rating-number').first().text().trim();
-    const maxRating = $('.rating-header small').first().text().match(/\d+/)?.[0];
-
-    if (!currentRating) {
-      return res.status(404).json({ error: 'User not found or page layout changed' });
-    }
-
-    const userData = {
-      username,
-      rating: parseInt(currentRating),
-      maxRating: parseInt(maxRating),
-      profileUrl,
-    };
-
-    cache[username] = {
-      data: userData,
-      timestamp: Date.now(),
-    };
-
-    res.json(userData);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to fetch CodeChef data' });
-  }
+app.get('/', (req, res) => {
+  res.json({ message: 'Coding Profiles API is running' });
 });
 
-app.listen(Port, () => {
-  console.log(`Server is running on port ${Port}`);
-});
+if (process.env.VERCEL) {
+  module.exports = app;
+} else {
+  const port = process.env.PORT || 5000;
+  app.listen(port, () => {
+    console.log(`Server is running on port ${port}`);
+  });
+}
